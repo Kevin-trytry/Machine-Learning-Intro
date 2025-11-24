@@ -4,298 +4,247 @@ import matplotlib.pyplot as plt
 import glob
 import os
 from statsmodels.tsa.statespace.sarimax import SARIMAX
-from statsmodels.graphics.tsaplots import plot_acf
-from statsmodels.graphics.tsaplots import plot_pacf
-from statsmodels.tsa.stattools import adfuller
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from sklearn.metrics import mean_squared_error
 from math import sqrt
+import warnings
 
+# 忽略警告訊息 (讓輸出乾淨一點)
+warnings.filterwarnings("ignore")
+
+# ==========================================
+# 1. 資料讀取與清洗 (沿用你的邏輯)
+# ==========================================
 def prepare_mrt_data(path):
     files = sorted(glob.glob(os.path.join(path, "*.xlsx")))
-
     if not files:
-            print(f"警告：在 {path} 找不到任何 .xlsx 檔案")
-            return pd.DataFrame() # 回傳空表
-    
-    df_list = []
-    
-    # 為了避免手動設定 nrows 出錯，建議用 append 的方式
-    # 這裡沿用你的 nrows 邏輯，但建議加上 dropna 以防萬一
-    # 假設 files 順序正確：Jan, Feb, ... Dec
-    
-    # 這裡定義每個月的天數 (2024是閏年)
-    days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    if path[2:6] == '2024':
-        days_in_month = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
-    elif path[2:6] == '2025':
-        days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31]
-    
-    for i, file in enumerate(files):        
-        print(f"Reading: {os.path.basename(file)}")
-        df = pd.read_excel(file, header=4, nrows=days_in_month[i], usecols=[0, 1, 2, 3, 4])
-        df.columns = ['Date', 'Day_of_Week', 'Red_Line_Count', 'Orange_Line_Count', 'Total_Count']
-        df_list.append(df)
+        print(f"警告：在 {path} 找不到任何 .xlsx 檔案")
+        return pd.DataFrame()
 
-    # 合併
-    full_df = pd.concat(df_list, ignore_index=True)
+    df_list = []
+    # 自動判斷年份以設定每月天數 (簡單防呆)
+    year_str = path.split('mrt')[0][-4:] # 嘗試從路徑抓年份，例如 './2024mrt' -> '2024'
+    is_leap = False
+    if '2024' in path or '2028' in path: 
+        is_leap = True
     
-    return full_df
+    days_in_month = [31, 29 if is_leap else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+
+    for i, file in enumerate(files):
+        try:
+            # 確保不會讀超過 months 陣列長度
+            if i >= len(days_in_month): break
+            
+            # print(f"Reading: {os.path.basename(file)}")
+            df = pd.read_excel(file, header=4, nrows=days_in_month[i], usecols=[0, 1, 2, 3, 4])
+            df.columns = ['Date', 'Day_of_Week', 'Red_Line_Count', 'Orange_Line_Count', 'Total_Count']
+            df_list.append(df)
+        except Exception as e:
+            print(f"讀取 {file} 失敗: {e}")
+
+    if df_list:
+        full_df = pd.concat(df_list, ignore_index=True)
+        return full_df
+    else:
+        return pd.DataFrame()
 
 def clean_num(df):
-    # A. 將 Date 轉為 datetime 物件
-    df['Date'] = pd.to_datetime(df['Date'])
+    if df.empty: return df
     
-    # B. 將 Date 設為 Index
+    df['Date'] = pd.to_datetime(df['Date'])
     df.set_index('Date', inplace=True)
     
-    # C. 設定頻率
+    # 嘗試設定頻率
+    df = df[~df.index.duplicated(keep='first')]
     try:
-        df.index.freq = 'D'
+        df = df.asfreq('D')
     except:
-        # 嘗試移除重複索引後再設定
-        df = df[~df.index.duplicated(keep='first')]
-        try:
-            df = df.asfreq('D')
-        except:
-            pass # 如果真的無法設定，就不勉強，避免報錯
-    
-    # D. [核心修改] 依照你的邏輯處理數值與空缺
+        pass
+
     cols_to_fix = ['Red_Line_Count', 'Orange_Line_Count', 'Total_Count']
-    
     for col in cols_to_fix:
-        # 1. 強制轉為數字，無法轉的變成 NaN
         df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # 2. 第一優先：若有缺失，用「7天前」與「7天後」的平均值填入
-        # 邏輯：(X_{t-7} + X_{t+7}) / 2
+        # 補值邏輯：前後7天平均
         avg_neighbors = (df[col].shift(7) + df[col].shift(-7)) / 2
         df[col] = df[col].fillna(avg_neighbors)
         
-        # 3. 第二優先：連鎖填補 (處理連續缺失或邊界狀況)
-        # 我們跑一個小迴圈(例如5次)，讓數據可以「傳遞」
-        # 例如：1/1 缺 -> 找 1/8；如果 1/8 也缺 -> 找 1/15... 
-        # 當 1/15 補好了，下一次迴圈 1/8 就會補好，再下一次 1/1 就會補好。
-        
-        for _ in range(5): # 假設連續缺失不超過 5 週，通常夠用了
-            # 情況 A: 找「7天前」的資料 (例如 1/15 沒資料，用 1/8 填)
+        # 連鎖填補
+        for _ in range(3):
             df[col] = df[col].fillna(df[col].shift(7))
-            
-            # 情況 B: 找「7天後」的資料 (例如 1/1 沒資料，用 1/8 填；或 1/22 沒資料用 1/29)
             df[col] = df[col].fillna(df[col].shift(-7))
             
-        # 4. 最後防線 (萬一整整兩個月都沒資料，避免程式當機)
-        # 雖然依你的邏輯應該都補完了，但為了安全起見，剩下的填 0
-        df[col] = df[col].fillna(0)
+        df[col] = df[col].fillna(0) # 最後防線
 
-    # E. 處理星期特徵
     df['Day_of_Week'] = df.index.dayofweek
-    df['Is_Weekend'] = df['Day_of_Week'].apply(lambda x: 1 if x >= 5 else 0)
-
     return df
 
-def initial_plots(time_series, num_lag):
-    plt.figure(figsize=(12, 8)) # 把圖變大一點比較好看
+# ==========================================
+# 2. 關鍵功能：加入演唱會特徵 (Feature Engineering)
+# ==========================================
+def add_concert_feature(df):
+    """
+    在這裡建立 'Is_Concert' 欄位。
+    """
+    df['Is_Concert'] = 0 # 初始化，預設為 0
     
-    plt.subplot(3, 1, 1)
-    plt.plot(time_series)
-    plt.title('Original data across time')
+    # ==============================================
+    # ⚠️【請在這裡填入真實的演唱會日期】⚠️
+    # 格式：'YYYY-MM-DD'
+    # ==============================================
+    concert_dates_list = [
+        # --- 2024 範例資料 (請替換成真的) ---
+        '2024-01-01', '2024-01-19', '2024-01-27', 
+        '2024-02-03', 
+        '2024-03-09', '2024-03-30',
+        '2024-07-05',  
+        '2024-08-10',
+        '2024-09-07','2024-09-08','2024-09-14','2024-09-21','2024-09-28', '2024-09-29',
+        '2024-10-05', 
+        '2024-11-03', '2024-11-16', '2024-11-23',
+        '2024-12-05',
+
+
+        # --- 2025 範例資料 (請替換成真的) ---
+        '2025-01-01', '2025-01-04', '2025-01-05', # 五月天 (範例)
+        '2025-02-14', # 假設的情人節演唱會
+        # ... 繼續填寫你們抓到的日期 ...
+    ]
     
-    plt.subplot(3, 1, 2)
-    plot_acf(time_series, lags=num_lag, ax=plt.gca())
-    plt.title('Autocorrelation plot')
+    # 轉換日期格式並標記
+    concert_dates = pd.to_datetime(concert_dates_list)
     
-    plt.subplot(3, 1, 3)
-    plot_pacf(time_series, lags=num_lag, ax=plt.gca())
-    plt.title('Partial autocorrelation plot')
-    plt.tight_layout()
-    plt.show()
-
-#Defining RMSE
-def rmse(x,y):
-    return sqrt(mean_squared_error(x,y))
-
-def run_grid_search(trainingSeries, testingSeries, p_list, d_list, q_list, P_list, D_list, Q_list, s_list):
+    # 標記邏輯：如果是演唱會當天，設為 1
+    # 進階技巧：如果你知道當天人數，可以填入預估人數 (例如 45000) 取代 1，效果會更好
+    mask = df.index.isin(concert_dates)
+    df.loc[mask, 'Is_Concert'] = 1 
     
-    # 1. 切分訓練集與測試集 (最後 30 天當作期末考驗證)
-    train = trainingSeries
-    test = testingSeries
+    return df
 
-    forecastLength = len(test)
-    
-    results = []
-    total_combinations = len(p_list) * len(d_list) * len(q_list) * len(P_list) * len(D_list) * len(Q_list)
-    current_iter = 0
-    
-    print(f"開始訓練... 總共有 {total_combinations} 種組合需要測試")
+# ==========================================
+# 3. 主程式
+# ==========================================
 
-    # 2. 暴力迴圈測試所有組合
-    for p in p_list:
-        for d in d_list:
-            for q in q_list:
-                for P in P_list:
-                    for D in D_list:
-                        for Q in Q_list:
-                            for s in s_list:
-                                current_iter += 1
-                                param = (p, d, q)
-                                seasonal_param = (P, D, Q, s)
-                                
-                                try:
-                                    # 建立並訓練模型 (先不加 exog，跑純時間序列)
-                                    # enforce_stationarity=False 允許模型處理稍微不平穩的數據
-                                    model = SARIMAX(train,
-                                                    order=param,
-                                                    seasonal_order=seasonal_param,
-                                                    enforce_stationarity=False,
-                                                    enforce_invertibility=False)
-                                    
-                                    results_model = model.fit(disp=False)
-                                    
-                                    # 預測測試集 (Out-of-sample forecast)
-                                    pred = results_model.forecast(steps=forecastLength)
-                                    
-                                    # 計算分數
-                                    rmse_score = rmse(test, pred)
-                                    
-                                    # 存檔
-                                    results.append({
-                                        'p': p, 'd': d, 'q': q,
-                                        'P': P, 'D': D, 'Q': Q, 's': s,
-                                        'AIC': results_model.aic,
-                                        'RMSE': rmse_score
-                                    })
-                                    
-                                    # 每 5 次印一次進度，讓你確認程式還在跑
-                                    if current_iter % 5 == 0:
-                                        print(f"[{current_iter}/{total_combinations}] RMSE: {rmse_score:.2f} | Order: {param} x {seasonal_param}")
+#設定路徑 (請依據你的資料夾名稱修改)
+path_2024 = './dataset/高雄捷運113運量統計表' 
+path_2025 = './dataset/高雄捷運114年運量統計表'
 
-                                except Exception as e:
-                                    # 某些參數組合可能會導致數學運算錯誤 (如矩陣無法反轉)，直接跳過
-                                    print(f"參數失敗 {param} x {seasonal_param}: {e}")
-                                    continue
-                                    
-    # 3. 整理結果並排序
-    result_df = pd.DataFrame(results)
-    if not result_df.empty:
-        result_df = result_df.sort_values(by='RMSE') # 讓誤差最小的排前面
-        
-    return result_df
+print("1. 正在讀取並清洗資料...")
+print(f"【DEBUG檢查】path_2025 的值是: [{path_2025}]")
+print(f"【DEBUG檢查】資料夾真的存在嗎?: {os.path.exists(path_2025)}")
+# 讀取
+raw_2024 = prepare_mrt_data(path_2024)
+raw_2025 = prepare_mrt_data(path_2025)
 
-# main
-trainingPath = './2024mrt'
-testingPath = './2025mrt'
+# 清洗
+df_2024 = clean_num(raw_2024)
+df_2025 = clean_num(raw_2025)
 
-trainingRawData = prepare_mrt_data(trainingPath)
-traingData = clean_num(trainingRawData)
+if df_2024.empty or df_2025.empty:
+    print("錯誤：資料讀取失敗，請檢查路徑或檔案。")
+    exit()
 
-testingRawData = prepare_mrt_data(testingPath)
-testingData = clean_num(testingRawData)
+print("2. 正在加入演唱會特徵 (Feature Engineering)...")
+# 加入演唱會特徵
+df_2024 = add_concert_feature(df_2024)
+df_2025 = add_concert_feature(df_2025)
 
-trainingSeries = traingData['Total_Count']
-testingSeries = testingData['Total_Count']
+# === 設定訓練集與測試集 ===
+# 訓練集：2024 全年
+train_y = df_2024['Total_Count']
+train_exog = df_2024[['Is_Concert']] # 外部變數 (X)
 
-initial_plots(trainingSeries, 45)
+# 測試集：2025 (用來驗證)
+test_y = df_2025['Total_Count']
+test_exog = df_2025[['Is_Concert']]  # 外部變數 (X) - 這裡代表「未來的行程表」
 
+print(f"訓練集長度 (2024): {len(train_y)} 天")
+print(f"測試集長度 (2025): {len(test_y)} 天")
 
-# --- 設定參數範圍 (根據之前的圖表分析) ---
+# ==========================================
+# 4. SARIMAX 模型訓練 (含 Exog)
+# ==========================================
+print("\n3. 開始訓練 SARIMAX 模型 (含演唱會參數)...")
 
-# 非季節性參數 (Trend)
-p_list = [1, 2]    # PACF Lag 1 很高，試試看 AR(1) 或 AR(2)
-d_list = [1]       # 確定要做一階差分來消除短期趨勢
-q_list = [0, 1]    # ACF Lag 1 很高，試試看 MA(1)
+# 設定參數 (這裡填入你們 Grid Search 跑出來的最佳參數)
+# 如果還沒跑過，可以先用這個常見組合試試：
+#my_order = (2, 1, 1)          # (p, d, q)
+#my_seasonal_order = (1, 1, 0, 7) # (P, D, Q, s) - s=7 很重要
 
-# 季節性參數 (Seasonality)
-P_list = [0, 1]    # 季節性 AR
-D_list = [1]       # ⚠️ 關鍵：一定要做季節性差分 (消除每週循環)
-Q_list = [0, 1]    # 季節性 MA
-s_list = [7]       # ⚠️ 關鍵：週期為 7 天
+# 修改這兩行
+my_order = (1, 0, 1)          # 把中間的 d 改成 0 (假設平穩)
+# 將 D 從 0 改為 1
+my_seasonal_order = (1, 1, 1, 7)
 
-# --- 執行搜索 (針對總運量 totalData) ---
-# 注意：這可能需要跑 1~2 分鐘
-best_models = run_grid_search(trainingSeries,testingSeries, 
-                              p_list, d_list, q_list, 
-                              P_list, D_list, Q_list, s_list)
-
-# --- 查看冠軍模型 ---
-print("\n=== 最佳模型排行榜 (Top 5) ===")
-print(best_models.head())
-
-# --- 4. 畫出最終結果 ---
-# 取得最佳參數
-top_model = best_models.iloc[0]
-best_order = (int(top_model['p']), int(top_model['d']), int(top_model['q']))
-best_seasonal = (int(top_model['P']), int(top_model['D']), int(top_model['Q']), int(top_model['s']))
-
-# 重新訓練
-final_model = SARIMAX(trainingSeries, 
-                      order=best_order, 
-                      seasonal_order=best_seasonal,
-                      enforce_stationarity=False, 
-                      enforce_invertibility=False)
-results = final_model.fit(disp=False)
-
-# 預測 2025
-pred_steps = len(trainingSeries)
-pred = results.get_forecast(steps=pred_steps)
-pred_mean = pred.predicted_mean
-pred_ci = pred.conf_int()
-
-# 繪圖
-plt.figure(figsize=(15, 6))
-
-# 畫 2024 的最後一段 (作為歷史參考)
-plt.plot(trainingSeries.index[-60:], trainingSeries[-60:], label='Train (2024)', color='gray', alpha=0.5)
-
-# 畫 2025 的真實數據
-plt.plot(testingSeries.index, testingSeries, label='Test (2025 Real)', color='blue')
-
-# 畫 2025 的預測數據
-plt.plot(pred_mean.index, pred_mean, label='Prediction (2025)', color='red', linestyle='--')
-
-plt.fill_between(pred_mean.index, pred_ci.iloc[:, 0], pred_ci.iloc[:, 1], color='pink', alpha=0.3)
-plt.title(f'2024 Train -> 2025 Predict (RMSE: {top_model["RMSE"]:.0f})')
-plt.legend()
-plt.show()
-
-'''
-# --- 1. 設定冠軍參數 (從你的排行榜抄下來) ---
-best_order = (2, 1, 1)
-best_seasonal_order = (1, 1, 0, 7)
-
-# --- 2. 重新訓練模型 (只用冠軍參數) ---
-train = totalData[:-30]
-test = totalData[-30:]
-
-print("正在使用最佳參數重新訓練模型...")
-model = SARIMAX(train, 
-                order=best_order, 
-                seasonal_order=best_seasonal_order,
+model = SARIMAX(train_y, 
+                exog=train_exog,        # <--- 關鍵：加入演唱會特徵
+                order=my_order, 
+                seasonal_order=my_seasonal_order,
                 enforce_stationarity=False, 
                 enforce_invertibility=False)
 
 results = model.fit(disp=False)
+print("模型訓練完成！")
+print(results.summary().tables[1]) # 印出係數表，看 'Is_Concert' 的 P>|z| 是否小於 0.05
 
-# --- 3. 預測最後 30 天 ---
-pred = results.get_forecast(steps=30)
-pred_mean = pred.predicted_mean
-pred_ci = pred.conf_int() # 取得信賴區間 (陰影部分)
+# ==========================================
+# 5. 預測 2025 並評估
+# ==========================================
+print("\n4. 正在預測 2025 年流量...")
 
-# --- 4. 畫圖 (這是報告要用的圖) ---
-plt.figure(figsize=(15, 6))
+# 預測需要提供 steps (幾天) 和 exog (那幾天的演唱會狀況)
+forecast_steps = len(test_y)
+pred_obj = results.get_forecast(steps=forecast_steps, exog=test_exog)
+pred_mean = pred_obj.predicted_mean
+pred_ci = pred_obj.conf_int()
 
-# 畫出真實數據 (只畫最後 90 天比較看得清楚，不用畫整年)
-plt.plot(totalData.index[-90:], totalData[-90:], label='Actual (History)', color='gray', alpha=0.5)
-plt.plot(test.index, test, label='Actual (Ground Truth)', color='blue', linewidth=2)
+# --- 計算誤差 (RMSE) ---
+rmse_total = sqrt(mean_squared_error(test_y, pred_mean))
+print(f"\n=== 評估結果 ===")
+print(f"2025 整體 RMSE: {rmse_total:.2f}")
 
-# 畫出預測數據
-plt.plot(pred_mean.index, pred_mean, label='Prediction (SARIMAX)', color='red', linestyle='--', linewidth=2)
+# --- 進階評估：只看演唱會日子的誤差 ---
+concert_indices = test_exog[test_exog['Is_Concert'] == 1].index
+if not concert_indices.empty:
+    # 找出那些日子的真實值與預測值
+    y_true_concert = test_y[test_y.index.isin(concert_indices)]
+    y_pred_concert = pred_mean[pred_mean.index.isin(concert_indices)]
+    
+    rmse_concert = sqrt(mean_squared_error(y_true_concert, y_pred_concert))
+    print(f"2025 演唱會日 RMSE: {rmse_concert:.2f}")
+    
+    # 印出這幾天的細節給你看
+    print("\n--- 演唱會日預測詳情 (前5筆) ---")
+    detail_df = pd.DataFrame({'Actual': y_true_concert, 'Predicted': y_pred_concert})
+    detail_df['Diff'] = detail_df['Actual'] - detail_df['Predicted']
+    print(detail_df.head())
+else:
+    print("2025 測試資料中沒有標記任何演唱會，無法計算特定誤差。")
 
-# 畫出信賴區間 (陰影)
-plt.fill_between(pred_mean.index, 
-                 pred_ci.iloc[:, 0], 
-                 pred_ci.iloc[:, 1], color='pink', alpha=0.3)
+# ==========================================
+# 6. 畫圖 (Visualization)
+# ==========================================
+plt.figure(figsize=(15, 7))
 
-plt.title(f'SARIMAX Prediction vs Actual (RMSE: {23836.856827:.0f})', fontsize=16)
+# 畫 2024 最後一季 (當作背景參考)
+plt.plot(train_y.index[-90:], train_y[-90:], label='History (2024 Q4)', color='gray', alpha=0.4)
+
+# 畫 2025 真實數據
+plt.plot(test_y.index, test_y, label='Actual 2025', color='blue', linewidth=1.5)
+
+# 畫 2025 預測數據
+plt.plot(pred_mean.index, pred_mean, label='Predicted 2025 (SARIMAX+Exog)', color='red', linestyle='--', linewidth=2)
+
+# 標記演唱會日期 (畫虛線)
+if not concert_indices.empty:
+    for date in concert_indices:
+        plt.axvline(x=date, color='orange', linestyle=':', alpha=0.6, ymax=0.1) # 底部畫個小標記
+
+# 畫信賴區間
+plt.fill_between(pred_mean.index, pred_ci.iloc[:, 0], pred_ci.iloc[:, 1], color='pink', alpha=0.2)
+
+plt.title(f'Kaohsiung MRT Flow Prediction: 2024 Train -> 2025 Test\nRMSE: {rmse_total:.0f}', fontsize=14)
 plt.legend()
 plt.grid(True, alpha=0.3)
-plt.show()'''
+plt.tight_layout()
+plt.show()
