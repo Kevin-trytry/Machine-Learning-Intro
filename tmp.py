@@ -130,8 +130,7 @@ path_2024 = './dataset/高雄捷運113運量統計表'
 path_2025 = './dataset/高雄捷運114年運量統計表'
 
 print("1. 正在讀取並清洗資料...")
-print(f"【DEBUG檢查】path_2025 的值是: [{path_2025}]")
-print(f"【DEBUG檢查】資料夾真的存在嗎?: {os.path.exists(path_2025)}")
+
 # 讀取
 raw_2024 = prepare_mrt_data(path_2024)
 raw_2025 = prepare_mrt_data(path_2025)
@@ -168,15 +167,9 @@ print("\n3. 開始訓練 SARIMAX 模型 (含演唱會參數)...")
 
 # 設定參數 (這裡填入你們 Grid Search 跑出來的最佳參數)
 # 如果還沒跑過，可以先用這個常見組合試試：
-#my_order = (2, 1, 1)          # (p, d, q)
-#my_seasonal_order = (1, 1, 0, 7) # (P, D, Q, s) - s=7 很重要
+my_order = (2, 1, 1)          # (p, d, q)
+my_seasonal_order = (1, 1, 0, 7) # (P, D, Q, s) - s=7 很重要
 
-# 修改這兩行
-my_order = (1, 0, 1)          # 把中間的 d 改成 0 (假設平穩)
-# 將 D 從 0 改為 1
-my_seasonal_order = (1, 1, 1, 7)
-
-<<<<<<< HEAD
 model = SARIMAX(train_y, 
                 exog=train_exog,        # <--- 關鍵：加入演唱會特徵
                 order=my_order, 
@@ -249,51 +242,3 @@ plt.legend()
 plt.grid(True, alpha=0.3)
 plt.tight_layout()
 plt.show()
-=======
-# --- 執行搜索 (針對總運量 totalData) ---
-# 注意：這可能需要跑 1~2 分鐘
-best_models = run_grid_search(trainingSeries,testingSeries, 
-                              p_list, d_list, q_list, 
-                              P_list, D_list, Q_list, s_list)
-
-# --- 查看冠軍模型 ---
-print("\n=== 最佳模型排行榜 (Top 5) ===")
-print(best_models.head())
-
-# --- 4. 畫出最終結果 ---
-# 取得最佳參數
-top_model = best_models.iloc[0]
-best_order = (int(top_model['p']), int(top_model['d']), int(top_model['q']))
-best_seasonal = (int(top_model['P']), int(top_model['D']), int(top_model['Q']), int(top_model['s']))
-
-# 重新訓練
-final_model = SARIMAX(trainingSeries, 
-                      order=best_order, 
-                      seasonal_order=best_seasonal,
-                      enforce_stationarity=False, 
-                      enforce_invertibility=False)
-results = final_model.fit(disp=False)
-
-# 預測 2025
-pred_steps = len(trainingSeries)
-pred = results.get_forecast(steps=pred_steps)
-pred_mean = pred.predicted_mean
-pred_ci = pred.conf_int()
-
-# 繪圖
-plt.figure(figsize=(15, 6))
-
-# 畫 2024 的最後一段 (作為歷史參考)
-plt.plot(trainingSeries.index[-60:], trainingSeries[-60:], label='Train (2024)', color='gray', alpha=0.5)
-
-# 畫 2025 的真實數據
-plt.plot(testingSeries.index, testingSeries, label='Test (2025 Real)', color='blue')
-
-# 畫 2025 的預測數據
-plt.plot(pred_mean.index, pred_mean, label='Prediction (2025)', color='red', linestyle='--')
-
-plt.fill_between(pred_mean.index, pred_ci.iloc[:, 0], pred_ci.iloc[:, 1], color='pink', alpha=0.3)
-plt.title(f'2024 Train -> 2025 Predict (RMSE: {top_model["RMSE"]:.0f})')
-plt.legend()
-plt.show()
->>>>>>> eb81a608337fe1db4e1a57e91efab43114ee6b23
