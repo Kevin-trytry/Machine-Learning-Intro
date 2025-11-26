@@ -1,0 +1,51 @@
+Code flow：
+Part1. Read in the data (func. prepare_mrt_data)
+讀取excel檔案的內容，並從標題開始讀取，
+為每個column加上標題(df.columns = ['Date', 'Day_of_Week', 'Red_Line_Count', 'Orange_Line_Count', 'Total_Count'])，
+並把空的日期清掉
+
+Part2. data cleaning (func. clean_and_impute)
+讀取進表格的資料，將日期轉成索引，但有可能會有日期缺失、多讀取到非日期的位置，因此需要把無效日期移除(就是移除NaN)，並將重複的日期移除
+try catch那段，因為有可能表格有缺日期，我們需要把他補上，所以用df = df.asfreq('D')補值，以日為頻率。
+最後是資料補值，剛剛缺失的值，先用上下週平均，找不到往上上或下下週找，最多橫跨三個，找不到就填0。
+最後的最後，就是將Day_Of_Week欄位，利用萬年曆將日期轉換成星期(0：Monday，6：Sunday)
+
+Part3. feature engineering (concert_features_enhanced, holiday_features_enhanced, typhoon_features_enhanced)
+(1) 演唱會：在df中新增Concert_People的欄位(要歸0)，並把所有演唱會日期、人數標記出來(continuous value)，接著對照表格填入
+(2) 颱風和假日：和演唱會作法一樣，新增欄位(要歸0)及找出日期，接著對照日期標記有無颱風或假日(有:1，無:0)
+
+Part4. Grid Search (find_best_sarimax_params)
+1. 傳入pdq及seasonal pdq，並列出所有排列組合
+2. 執行迴圈，設定參數如下：
+    (1) y(endogenous)，主要變數，及捷運流量
+    (2) exogneous，外生變數，即國定假日、演唱會、颱風
+    (3) order，當前傳入參數組合
+    (4) order_seasonal，季節參數組合
+    (5) enforce_stationarity，關閉穩定性，強制算出每個AIC
+    (6) enforce_invertibility，關閉可逆性強制，使MA(q)可超過邊界
+    (5)(6)目的是讓程式持續運行
+3. 不斷更新最佳組合直到找到最佳
+
+
+SARIMAX NOTE
+參數部分
+小寫
+p: 慣性，用於昨天預估今天，數字代表往回看幾天(0:不看，1:一天，2:昨天+今天依此類推)
+d: 差分，告訴電腦利用昨天和今天的差距預估明天，因為電腦看不懂趨勢，
+    d數字越大代表差分的程度
+    0:不差分
+    1:一次，通常代表數據有線性成長或下降趨勢
+    2:兩次，代表數據為指數加速成長或下降
+q: Moving Average(MA)，利用移動平均法修正突發事件帶來的流量變化，如颱風、活動
+    數字代表的是往回修正幾天(0:不修正，1:一天，2:兩天)，如果數字太大，可能造成overfitting
+大寫部分
+s: 週期，以本自來說就是7天
+P: 上週與這周的慣性
+D: 上週與這周的差距
+Q: 修正幾周
+
+模型預估公式：今天的預測值 = A + B + C + 修正誤差
+A: 綜合慣性預估，利用p和P參數，看昨日與上周的狀態預估今日
+B: 修正誤差，看q和Q，修正昨日與上周突發事件造成的誤差
+C: 外部活動，在本次模型就是演唱會、颱風的影響
+也可以這樣看：今天的預測值 = a*昨天(小p) + b*上週(大P) + c*演唱會(外部) + 修正誤差(大Q+小q)

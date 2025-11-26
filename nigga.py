@@ -31,7 +31,7 @@ def prepare_mrt_data(path):
         if i >= len(days_in_month): break
         try:
             # 讀取 Excel (假設格式固定: 前4行Header, 取前5欄)
-            df = pd.read_excel(file, header=4, nrows=days_in_month[i], usecols=[0, 1, 2, 3, 4])
+            df = pd.read_excel(file, header=4, nrows=days_in_month[i], usecols=[0, 1, 2, 3, 4]) #標題以下讀取該月份天數的資料量
             df.columns = ['Date', 'Day_of_Week', 'Red_Line_Count', 'Orange_Line_Count', 'Total_Count']
             df_list.append(df)
         except Exception as e:

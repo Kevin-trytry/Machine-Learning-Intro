@@ -167,8 +167,11 @@ print("\n3. 開始訓練 SARIMAX 模型 (含演唱會參數)...")
 
 # 設定參數 (這裡填入你們 Grid Search 跑出來的最佳參數)
 # 如果還沒跑過，可以先用這個常見組合試試：
-my_order = (2, 1, 1)          # (p, d, q)
-my_seasonal_order = (1, 1, 0, 7) # (P, D, Q, s) - s=7 很重要
+#my_order = (2, 1, 1)          # (p, d, q)
+#my_seasonal_order = (1, 1, 0, 7) # (P, D, Q, s) - s=7 很重要
+
+my_order = (2, 1, 1)          # d=1 會導致長期預測產生漂移
+my_seasonal_order = (1, 1, 0, 7) # D=1 解決長期預測平坦問題
 
 model = SARIMAX(train_y, 
                 exog=train_exog,        # <--- 關鍵：加入演唱會特徵

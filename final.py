@@ -51,21 +51,21 @@ def clean_and_impute(df):
     if df.empty: return df
     
     # 處理日期格式與索引
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce') # 防呆: 遇到"總計"變NaT
-    df = df.dropna(subset=['Date'])
-    df.set_index('Date', inplace=True)
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce') # 防呆: 遇到"總計"變NaT，預防可能該月有某天忘記填寫日期，以至於多跑到總計那邊
+    df = df.dropna(subset=['Date']) # 移除無效日期行
+    df.set_index('Date', inplace=True) # 將日期設為索引
     
     # 設定頻率，移除重複
-    df = df[~df.index.duplicated(keep='first')]
+    df = df[~df.index.duplicated(keep='first')] 
     try:
-        df = df.asfreq('D')
+        df = df.asfreq('D') #缺值補NaN
     except:
         pass
 
     cols = ['Red_Line_Count', 'Orange_Line_Count', 'Total_Count']
     
     for col in cols:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        df[col] = pd.to_numeric(df[col], errors='coerce') # 防呆: 非數值轉NaN
         
         # 2. 補值邏輯：前後 7 天平均
         avg_neighbors = (df[col].shift(7) + df[col].shift(-7)) / 2
@@ -78,7 +78,7 @@ def clean_and_impute(df):
             
         df[col] = df[col].fillna(0) # 最後防線
 
-    df['Day_of_Week'] = df.index.dayofweek
+    df['Day_of_Week'] = df.index.dayofweek # 利用日期，將他轉為星期幾 (0=週一, 6=週日)
     return df
 
 # ==========================================
@@ -87,7 +87,7 @@ def clean_and_impute(df):
 def concert_features_enhanced(df):
     df['Concert_People'] = 0  # 預設為 0
     
-    # --- A. 演唱會資料庫 (範例數據，請依實際情況擴充) ---
+    # --- A. 演唱會資料庫 (範例數據，請依實際情況擴充)，為連續數值 ---
     concert_map = {
         # === 一月 ===
         '2024-01-01': 11000, # 羅志祥(巨蛋1萬) + 夢時代跨年人流餘波/連假效應(估4萬)
@@ -224,7 +224,7 @@ def concert_features_enhanced(df):
 def holiday_features_enhanced(df):
     df['Is_Holiday'] = 0      # 預設為 0
 
-    # --- B. 國定假日 (包含連假) ---
+    # --- B. 國定假日 (包含連假)，為類別數值(0：無，1：有) ---
     holidays = [
         # 2024
         '2024-01-01', '2024-02-08', '2024-02-09', '2024-02-10', '2024-02-11', '2024-02-12', 
@@ -270,7 +270,7 @@ def find_best_sarimax_params(y, exog, p_list, d_list, q_list, P_list, D_list, Q_
     pdq = list(itertools.product(p_list, d_list, q_list))
     seasonal_pdq = list(itertools.product(P_list, D_list, Q_list, [s]))
     
-    best_aic = float("inf")
+    best_aic = float("inf") # 初始化為無限大，AIC分數越低，表現越好
     best_order = None
     best_seasonal = None
     
@@ -282,13 +282,13 @@ def find_best_sarimax_params(y, exog, p_list, d_list, q_list, P_list, D_list, Q_
         for param_seasonal in seasonal_pdq:
             counter += 1
             try:
-                mod = SARIMAX(y,
-                              exog=exog,
-                              order=param,
-                              seasonal_order=param_seasonal,
-                              enforce_stationarity=False,
-                              enforce_invertibility=False)
-                results = mod.fit(disp=False)
+                mod = SARIMAX(y,    # endogenous，即主要分析資料，就是捷運流量
+                              exog=exog, #exogenous即外生變數(演唱會、國定假日、颱風天)
+                              order=param, # 傳入(p, d, q)給order參數，模型以當前參數組合訓練
+                              seasonal_order=param_seasonal, # 傳入(P, D, Q, s)給seasonal_order參數
+                              enforce_stationarity=False, # 關閉平穩性強制，讓模型強制算出一個AIC值，儘管當前組合很爛
+                              enforce_invertibility=False) # 關閉可逆性強制，MA(q)可能會算超過邊界，但仍強制通過
+                results = mod.fit(disp=False) # disp=False 關閉收斂訊息輸出
                 
                 if results.aic < best_aic:
                     best_aic = results.aic
