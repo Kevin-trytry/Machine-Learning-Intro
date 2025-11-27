@@ -333,8 +333,8 @@ train_y_log = np.log(df_2024['Total_Count'])
 train_exog = df_2024[['Concert_People', 'Is_Holiday', 'Is_Typhoon']]
 
 # 準備測試數據 (全資料集，用於滾動預測)
-full_df = pd.concat([df_2024, df_2025])
-full_y_log = np.log(full_df['Total_Count'])
+full_df = pd.concat([df_2024, df_2025]) # 合併24、25年資料，因為要完整時間序列(如2024/12/31有演唱會，會影響2025/1/1的預測)
+full_y_log = np.log(full_df['Total_Count']) 
 full_exog = full_df[['Concert_People', 'Is_Holiday', 'Is_Typhoon']]
 
 # --- 2. 尋找最佳參數 ---
@@ -381,14 +381,14 @@ results_full = model_full.filter(results_train.params)
 
 # 開始預測 2025 (使用 dynamic=False，即每次預測都基於前一天的真實數據)
 split_date = df_2025.index[0]
-pred_obj = results_full.get_prediction(start=split_date, dynamic=False)
+pred_obj = results_full.get_prediction(start=split_date, dynamic=False) #start=split_date 指定從2025年1月1日開始預測
 
 # 取出預測值 (Log) 並還原 (Exp)
 pred_mean = np.exp(pred_obj.predicted_mean)
-pred_ci = np.exp(pred_obj.conf_int())
+pred_ci = np.exp(pred_obj.conf_int()) # 信賴區間
 
 # 計算 RMSE
-rmse_total = sqrt(mean_squared_error(df_2025['Total_Count'], pred_mean))
+rmse_total = sqrt(mean_squared_error(df_2025['Total_Count'], pred_mean)) # RMSE：代表預測誤差大小(猜錯多少人)
 print(f"★ 2025 預測 RMSE: {rmse_total:.0f}")
 
 # --- 5. 繪圖 ---
