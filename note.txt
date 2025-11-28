@@ -61,6 +61,7 @@ SARIMAX NOTE
             2:兩次，代表數據為指數加速成長或下降
         q: Moving Average(MA)，利用移動平均法修正突發事件帶來的流量變化，如颱風、活動
             數字代表的是往回修正幾天(0:不修正，1:一天，2:兩天)，如果數字太大，可能造成overfitting
+            其為過去幾天error的linear combination
     大寫部分
         s: 週期，以本自來說就是7天
         P: 上週與這周的慣性
