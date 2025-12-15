@@ -51,7 +51,7 @@ def clean_and_impute(df):
     if df.empty: return df
     
     # 處理日期格式與索引
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce') # 防呆: 遇到"總計"變NaT，預防可能該月有某天忘記填寫日期，以至於多跑到總計那邊
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce') # 防呆: 遇到"總計"變NaN，預防可能該月有某天忘記填寫日期，以至於多跑到總計那邊
     df = df.dropna(subset=['Date']) # 移除無效日期行
     df.set_index('Date', inplace=True) # 將日期設為索引
     

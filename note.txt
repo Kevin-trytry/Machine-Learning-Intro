@@ -5,9 +5,9 @@ Part1. Read in the data (func. prepare_mrt_data)
     並把空的日期清掉
 
 Part2. data cleaning (func. clean_and_impute)
-    1. 讀取進表格的資料，將日期轉成索引，但有可能會有日期缺失、多讀取到非日期的位置，因此需要把無效日期移除(就是移除NaN)，並將重複的日期移除
+    1.  讀取進表格的資料，將日期轉成索引，但有可能會有日期缺失、多讀取到非日期的位置，因此需要把無效日期移除(就是移除NaN)，並將重複的日期移除
     2.  try catch那段，因為有可能表格有缺日期，我們需要把他補上，所以用df = df.asfreq('D')補值，以日為頻率。
-    3.  資料補值，在運算前座pd.to_numeric，把非數字的亂碼強制轉成NaN。剛剛缺失的值，先用上下週平均，找不到往上上或下下週找，最多橫跨三個，找不到就填0。
+    3.  資料補值，在運算前做pd.to_numeric，把非數字的亂碼強制轉成NaN。剛剛缺失的值，先用上下週平均，找不到往上上或下下週找，最多橫跨三個，找不到就填0。
     4.  最後的最後，就是將Day_Of_Week欄位，利用萬年曆將日期轉換成星期(0：Monday，6：Sunday)
 
 Part3. feature engineering (concert_features_enhanced, holiday_features_enhanced, typhoon_features_enhanced)
@@ -61,7 +61,7 @@ SARIMAX NOTE
             2:兩次，代表數據為指數加速成長或下降
         q: Moving Average(MA)，利用移動平均法修正突發事件帶來的流量變化，如颱風、活動
             數字代表的是往回修正幾天(0:不修正，1:一天，2:兩天)，如果數字太大，可能造成overfitting
-            其為過去幾天error的linear combination
+            其為過去幾天error的linear combination (MA 修正係數（theta） * 誤差)
     大寫部分
         s: 週期，以本自來說就是7天
         P: 上週與這周的慣性
